@@ -48,4 +48,9 @@ public class TestClass {
     public static void afterTestMethod() {
         System.out.println(" after test");
     }
+
+    @AfterTest
+    public static void anotherAfterTestMethod() {
+        System.out.println(" another after test");
+    }
 }

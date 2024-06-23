@@ -10,72 +10,40 @@ import java.lang.reflect.Modifier;
 import java.util.*;
 
 public class TestRunner {
-    public static void main(String[] args) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException {
+    public static void main(String[] args) throws Exception {
         runTests(TestClass.class);
     }
 
-    public static void runTests(Class c) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException {
+    public static void runTests(Class c) throws Exception {
 
-        if (checkExcessAnnotations(c)) {
-            runBeforeSuiteMethod(c);
-            runTestMethods(c);
-            runAfterSuiteMethod(c);
-        }
+        Map<String, List<Method>> necessaryMethods = getNecessaryMethods(c);
+
+        runStaticMethods(necessaryMethods.get("BeforeSuite"));
+        runTestMethods(c, necessaryMethods.get("Test"), necessaryMethods.get("BeforeTest"), necessaryMethods.get("AfterTest"));
+        runStaticMethods(necessaryMethods.get("AfterSuite"));
+
     }
 
-    private static boolean checkExcessAnnotations(Class c) {
-        int countBefore = 0;
-        int countAfter = 0;
-        for (Method method : c.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(BeforeSuite.class)) {
-                countBefore++;
-            }
-
-            if (method.isAnnotationPresent(AfterSuite.class)) {
-                countAfter++;
-            }
-        }
-
-        if (countBefore <= 1 && countAfter <= 1) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-
-    private static void runTestMethods(Class c) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException {
-        Map<Integer, List<Method>> priorityMethodsMap = new TreeMap<>(Comparator.reverseOrder());
-        for (Method method : c.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Test.class)) {
-                if (!Modifier.isStatic(method.getModifiers())) {
-                    int key = method.getAnnotation(Test.class).priority();
-                    List<Method> value =  priorityMethodsMap.getOrDefault(key, new ArrayList<>());
-                    value.add(method);
-
-                    priorityMethodsMap.put(key, value);
-                } else {
-                    throw new TestException("Method with annotation AfterSuite must be non-static");
-                }
-            }
-        }
+    private static void runTestMethods(Class c, List<Method> testMethods,
+                                       List<Method> beforeTestMethods, List<Method> afterTestMethods) throws Exception {
+        Collections.sort(testMethods, (o1, o2) -> o2.getAnnotation(Test.class).priority() - o1.getAnnotation(Test.class).priority());
 
         Object object = c.getConstructor(null).newInstance();
 
-        for (Map.Entry<Integer, List<Method>> entry : priorityMethodsMap.entrySet()) {
-            for (Method method : entry.getValue()) {
-                runBeforeTestMethod(c);
-                if (method.isAnnotationPresent(CsvSource.class)) {
-                    runCsvSourceMethod(method, object);
-                } else {
-                    method.invoke(object, new Object[0]);
-                }
-                runAfterTestMethod(c);
+
+        for (Method method : testMethods) {
+            runStaticMethods(beforeTestMethods);
+            if (method.isAnnotationPresent(CsvSource.class)) {
+                runCsvSourceMethod(method, object);
+            } else {
+                method.invoke(object, new Object[0]);
             }
+            runStaticMethods(afterTestMethods);
         }
+
     }
 
-    private static void runCsvSourceMethod(Method method, Object object) throws InvocationTargetException, IllegalAccessException, NoSuchMethodException, InstantiationException {
+    private static void runCsvSourceMethod(Method method, Object object) throws Exception {
         String[] parameters = method.getAnnotation(CsvSource.class).value().split(", ");
         Class[] parameterTypes = method.getParameterTypes();
 
@@ -90,31 +58,68 @@ public class TestRunner {
         method.invoke(object, args);
     }
 
-    private static void runBeforeSuiteMethod(Class c) throws InvocationTargetException, IllegalAccessException {
-        runStaticMethodWithAnnotation(c, BeforeSuite.class);
-    }
 
-    private static void runAfterSuiteMethod(Class c) throws InvocationTargetException, IllegalAccessException {
-        runStaticMethodWithAnnotation(c, AfterSuite.class);
-    }
-    private static void runBeforeTestMethod(Class c) throws InvocationTargetException, IllegalAccessException {
-        runStaticMethodWithAnnotation(c, BeforeTest.class);
-    }
-
-    private static void runAfterTestMethod(Class c) throws InvocationTargetException, IllegalAccessException {
-        runStaticMethodWithAnnotation(c, AfterTest.class);
-    }
-
-    private static void runStaticMethodWithAnnotation(Class c, Class annotationClass) throws InvocationTargetException, IllegalAccessException {
+    private static Map<String, List<Method>> getNecessaryMethods(Class c) {
+        Map<String, List<Method>> methodsMap = new HashMap<>();
         for (Method method : c.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(annotationClass)) {
+            if (method.isAnnotationPresent(BeforeSuite.class)) {
                 if (Modifier.isStatic(method.getModifiers())) {
-                    method.invoke(null, new Object[0]);
-                    return;
+                    if (methodsMap.containsKey("BeforeSuite")) {
+                        throw new TestException("Method with annotation BeforeSuite must be single");
+
+                    } else {
+                        methodsMap.put("BeforeSuite", Arrays.asList(method));
+                    }
                 } else {
-                    throw new TestException("Method with annotation " + annotationClass.getName() + " must be static");
+                    throw new TestException("Method with annotation BeforeSuite must be static");
                 }
+            } else if (method.isAnnotationPresent(AfterSuite.class)) {
+                if (Modifier.isStatic(method.getModifiers())) {
+                    if (methodsMap.containsKey("AfterSuite")) {
+                        throw new TestException("Method with annotation AfterSuite must be single");
+                    } else {
+                        methodsMap.put("AfterSuite", Arrays.asList(method));
+                    }
+                } else {
+                    throw new TestException("Method with annotation AfterSuite must be static");
+                }
+            } else if (method.isAnnotationPresent(BeforeTest.class)) {
+                if (Modifier.isStatic(method.getModifiers())) {
+                    List<Method> value = methodsMap.getOrDefault("BeforeTest", new ArrayList<>());
+                    value.add(method);
+                    methodsMap.put("BeforeTest", value);
+                } else {
+                    throw new TestException("Methods with annotation BeforeTest must be static");
+                }
+            } else if (method.isAnnotationPresent(AfterTest.class)) {
+                if (Modifier.isStatic(method.getModifiers())) {
+                    List<Method> value = methodsMap.getOrDefault("AfterTest", new ArrayList<>());
+                    value.add(method);
+                    methodsMap.put("AfterTest", value);
+                } else {
+                    throw new TestException("Methods with annotation AfterTest must be static");
+                }
+            } else if (method.isAnnotationPresent(Test.class)) {
+                if (!Modifier.isStatic(method.getModifiers())) {
+                    List<Method> value = methodsMap.getOrDefault("Test", new ArrayList<>());
+                    value.add(method);
+                    methodsMap.put("Test", value);
+                } else {
+                    throw new TestException("Methods with annotation Test must be non-static");
+                }
+            }
+
+        }
+        return methodsMap;
+    }
+
+    public static void runStaticMethods(List<Method> methods) throws Exception {
+        if (methods != null) {
+            for (Method method : methods) {
+                method.invoke(null, new Object[0]);
             }
         }
     }
+
+
 }
