@@ -1,10 +1,9 @@
-package ru.vtb;
+package ru.vtb.task1;
 
-import ru.vtb.annotation.*;
-import ru.vtb.exception.TestException;
-import ru.vtb.utl.TestClass;
+import ru.vtb.task1.exception.TestException;
+import ru.vtb.task1.annotation.*;
+import ru.vtb.task1.utl.TestClass;
 
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.*;
